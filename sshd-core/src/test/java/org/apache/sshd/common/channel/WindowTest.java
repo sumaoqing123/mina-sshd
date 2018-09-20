@@ -45,10 +45,10 @@ import org.apache.sshd.common.io.IoReadFuture;
 import org.apache.sshd.common.session.Session;
 import org.apache.sshd.common.util.buffer.Buffer;
 import org.apache.sshd.common.util.buffer.ByteArrayBuffer;
-import org.apache.sshd.server.Command;
 import org.apache.sshd.server.SshServer;
 import org.apache.sshd.server.channel.ChannelSession;
 import org.apache.sshd.server.channel.ChannelSessionFactory;
+import org.apache.sshd.server.command.Command;
 import org.apache.sshd.server.forward.DirectTcpipFactory;
 import org.apache.sshd.server.session.ServerConnectionService;
 import org.apache.sshd.server.session.ServerConnectionServiceFactory;
@@ -331,6 +331,10 @@ public class WindowTest extends BaseTestSupport {
     }
 
     public static class TestEchoShellFactory extends EchoShellFactory {
+        public TestEchoShellFactory() {
+            super();
+        }
+
         @Override
         public Command create() {
             return new TestEchoShell();
@@ -338,8 +342,11 @@ public class WindowTest extends BaseTestSupport {
     }
 
     public static class TestEchoShell extends EchoShell {
-
         public static final CountDownLatch LATCH = new CountDownLatch(1);
+
+        public TestEchoShell() {
+            super();
+        }
 
         @Override
         public void destroy() {

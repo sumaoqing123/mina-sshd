@@ -19,20 +19,15 @@
 
 package org.apache.sshd.git;
 
-import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.FileSystem;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.ExecutorService;
 
 import org.apache.sshd.common.channel.ChannelOutputStream;
-import org.apache.sshd.common.file.FileSystemAware;
-import org.apache.sshd.server.AbstractCommandSupport;
-import org.apache.sshd.server.SessionAware;
-import org.apache.sshd.server.session.ServerSession;
-import org.apache.sshd.server.session.ServerSessionHolder;
+import org.apache.sshd.common.util.threads.CloseableExecutorService;
+import org.apache.sshd.server.command.AbstractFileSystemCommand;
 
 /**
  * Provides basic support for GIT command implementations
@@ -40,44 +35,24 @@ import org.apache.sshd.server.session.ServerSessionHolder;
  * @author <a href="mailto:dev@mina.apache.org">Apache MINA SSHD Project</a>
  */
 public abstract class AbstractGitCommand
-        extends AbstractCommandSupport
-        implements SessionAware, FileSystemAware, ServerSessionHolder, GitLocationResolverCarrier {
+        extends AbstractFileSystemCommand
+        implements GitLocationResolverCarrier {
     public static final int CHAR = 0x001;
     public static final int DELIMITER = 0x002;
     public static final int STARTQUOTE = 0x004;
     public static final int ENDQUOTE = 0x008;
 
-    private final GitLocationResolver rootDirResolver;
-    private FileSystem fileSystem;
-    private ServerSession session;
+    protected final GitLocationResolver rootDirResolver;
+    protected FileSystem fileSystem;
 
-    protected AbstractGitCommand(GitLocationResolver rootDirResolver, String command, ExecutorService executorService, boolean shutdownOnExit) {
-        super(command, executorService, shutdownOnExit);
+    protected AbstractGitCommand(GitLocationResolver rootDirResolver, String command, CloseableExecutorService executorService) {
+        super(command, executorService);
         this.rootDirResolver = Objects.requireNonNull(rootDirResolver, "No GIT root directory resolver provided");
     }
 
     @Override
     public GitLocationResolver getGitLocationResolver() {
         return rootDirResolver;
-    }
-
-    public FileSystem getFileSystem() {
-        return fileSystem;
-    }
-
-    @Override
-    public void setFileSystem(FileSystem fileSystem) {
-        this.fileSystem = fileSystem;
-    }
-
-    @Override
-    public ServerSession getServerSession() {
-        return session;
-    }
-
-    @Override
-    public void setSession(ServerSession session) {
-        this.session = session;
     }
 
     @Override
@@ -93,25 +68,6 @@ public abstract class AbstractGitCommand
         super.setErrorStream(err);
         if (err instanceof ChannelOutputStream) {
             ((ChannelOutputStream) err).setNoDelay(true);
-        }
-    }
-
-    @Override
-    public void destroy() {
-        try {
-            super.destroy();
-        } finally {
-            FileSystem fs = getFileSystem();
-            if (fs != null) {
-                try {
-                    fs.close();
-                } catch (UnsupportedOperationException | IOException e) {
-                    if (log.isDebugEnabled()) {
-                        log.debug("destroy({}) - failed ({}) to close file system={}: {}",
-                                this, e.getClass().getSimpleName(), fs, e.getMessage());
-                    }
-                }
-            }
         }
     }
 

@@ -35,13 +35,11 @@ import java.nio.file.NotDirectoryException;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -67,16 +65,17 @@ import org.apache.sshd.common.util.buffer.Buffer;
 import org.apache.sshd.common.util.buffer.BufferUtils;
 import org.apache.sshd.common.util.buffer.ByteArrayBuffer;
 import org.apache.sshd.common.util.io.IoUtils;
+import org.apache.sshd.common.util.threads.CloseableExecutorService;
 import org.apache.sshd.common.util.threads.ExecutorServiceCarrier;
 import org.apache.sshd.common.util.threads.ThreadUtils;
-import org.apache.sshd.server.AsyncCommand;
 import org.apache.sshd.server.ChannelSessionAware;
-import org.apache.sshd.server.Command;
 import org.apache.sshd.server.Environment;
 import org.apache.sshd.server.ExitCallback;
 import org.apache.sshd.server.SessionAware;
 import org.apache.sshd.server.channel.ChannelDataReceiver;
 import org.apache.sshd.server.channel.ChannelSession;
+import org.apache.sshd.server.command.AsyncCommand;
+import org.apache.sshd.server.command.Command;
 import org.apache.sshd.server.session.ServerSession;
 
 /**
@@ -145,21 +144,17 @@ public class SftpSubsystem
     protected Future<?> pendingFuture;
     protected byte[] workBuf = new byte[Math.max(DEFAULT_FILE_HANDLE_SIZE, Integer.BYTES)];
     protected FileSystem fileSystem = FileSystems.getDefault();
-    protected Path defaultDir = fileSystem.getPath(System.getProperty("user.dir"));
+    protected Path defaultDir = fileSystem.getPath("").toAbsolutePath().normalize();
     protected int version;
 
     protected ServerSession serverSession;
     protected ChannelSession channelSession;
-    protected ExecutorService executorService;
-    protected boolean shutdownOnExit;
+    protected CloseableExecutorService executorService;
 
     /**
-     * @param executorService The {@link ExecutorService} to be used by
+     * @param executorService The {@link CloseableExecutorService} to be used by
      *                        the {@link SftpSubsystem} command when starting execution. If
      *                        {@code null} then a single-threaded ad-hoc service is used.
-     * @param shutdownOnExit  If {@code true} the {@link ExecutorService#shutdownNow()}
-     *                        will be called when subsystem terminates - unless it is the ad-hoc
-     *                        service, which will be shutdown regardless
      * @param policy          The {@link UnsupportedAttributePolicy} to use if failed to access
      *                        some local file attributes
      * @param accessor        The {@link SftpFileSystemAccessor} to use for opening files and directories
@@ -167,16 +162,14 @@ public class SftpSubsystem
      * use when generating failed commands error messages
      * @see ThreadUtils#newSingleThreadExecutor(String)
      */
-    public SftpSubsystem(ExecutorService executorService, boolean shutdownOnExit, UnsupportedAttributePolicy policy,
-            SftpFileSystemAccessor accessor, SftpErrorStatusDataHandler errorStatusDataHandler) {
+    public SftpSubsystem(CloseableExecutorService executorService, UnsupportedAttributePolicy policy,
+                         SftpFileSystemAccessor accessor, SftpErrorStatusDataHandler errorStatusDataHandler) {
         super(policy, accessor, errorStatusDataHandler);
 
         if (executorService == null) {
             this.executorService = ThreadUtils.newSingleThreadExecutor(getClass().getSimpleName());
-            this.shutdownOnExit = true;    // we always close the ad-hoc executor service
         } else {
             this.executorService = executorService;
-            this.shutdownOnExit = shutdownOnExit;
         }
     }
 
@@ -191,13 +184,8 @@ public class SftpSubsystem
     }
 
     @Override
-    public ExecutorService getExecutorService() {
+    public CloseableExecutorService getExecutorService() {
         return executorService;
-    }
-
-    @Override
-    public boolean isShutdownOnExit() {
-        return shutdownOnExit;
     }
 
     @Override
@@ -236,11 +224,7 @@ public class SftpSubsystem
     public void setFileSystem(FileSystem fileSystem) {
         if (fileSystem != this.fileSystem) {
             this.fileSystem = fileSystem;
-
-            Iterable<Path> roots = Objects.requireNonNull(fileSystem.getRootDirectories(), "No root directories");
-            Iterator<Path> available = Objects.requireNonNull(roots.iterator(), "No roots iterator");
-            ValidateUtils.checkTrue(available.hasNext(), "No available root");
-            this.defaultDir = available.next();
+            this.defaultDir = fileSystem.getPath("").toAbsolutePath().normalize();
         }
     }
 
@@ -283,7 +267,7 @@ public class SftpSubsystem
     public void start(Environment env) throws IOException {
         this.env = env;
         try {
-            ExecutorService executor = getExecutorService();
+            CloseableExecutorService executor = getExecutorService();
             pendingFuture = executor.submit(this);
         } catch (RuntimeException e) {    // e.g., RejectedExecutionException
             log.error("Failed (" + e.getClass().getSimpleName() + ") to start command: " + e.toString(), e);
@@ -1007,8 +991,8 @@ public class SftpSubsystem
 
         pendingFuture = null;
 
-        ExecutorService executors = getExecutorService();
-        if ((executors != null) && (!executors.isShutdown()) && isShutdownOnExit()) {
+        CloseableExecutorService executors = getExecutorService();
+        if ((executors != null) && (!executors.isShutdown())) {
             Collection<Runnable> runners = executors.shutdownNow();
             if (debugEnabled) {
                 log.debug("destroy(" + session + ") - shutdown executor service - runners count=" + runners.size());

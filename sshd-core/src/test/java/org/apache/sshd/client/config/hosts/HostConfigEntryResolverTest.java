@@ -48,7 +48,7 @@ import org.apache.sshd.common.util.net.SshdSocketAddress;
 import org.apache.sshd.server.SshServer;
 import org.apache.sshd.server.auth.password.RejectAllPasswordAuthenticator;
 import org.apache.sshd.util.test.BaseTestSupport;
-import org.apache.sshd.util.test.Utils;
+import org.apache.sshd.util.test.CommonTestSupportUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.FixMethodOrder;
@@ -109,13 +109,13 @@ public class HostConfigEntryResolverTest extends BaseTestSupport {
     public void testNegatedHostEntriesResolution() throws Exception {
         HostConfigEntry positiveEntry = new HostConfigEntry(TEST_LOCALHOST, TEST_LOCALHOST, port, getCurrentTestName());
         HostConfigEntry negativeEntry = new HostConfigEntry(
-                String.valueOf(HostPatternsHolder.NEGATION_CHAR_PATTERN) + positiveEntry.getHost(),
+                Character.toString(HostPatternsHolder.NEGATION_CHAR_PATTERN) + positiveEntry.getHost(),
                 positiveEntry.getHostName(),
                 getMovedPortNumber(positiveEntry.getPort()),
                 getClass().getPackage().getName());
         client.setHostConfigEntryResolver(
                 HostConfigEntry.toHostConfigEntryResolver(
-                        Arrays.asList(negativeEntry, positiveEntry)));
+                    Arrays.asList(negativeEntry, positiveEntry)));
         client.start();
 
         try (ClientSession session = client.connect(
@@ -132,8 +132,8 @@ public class HostConfigEntryResolverTest extends BaseTestSupport {
 
     @Test
     public void testPreloadedIdentities() throws Exception {
-        final KeyPair identity = Utils.getFirstKeyPair(sshd);
-        final String user = getCurrentTestName();
+        KeyPair identity = CommonTestSupportUtils.getFirstKeyPair(sshd);
+        String user = getCurrentTestName();
         // make sure authentication is achieved only via the identity public key
         sshd.setPublickeyAuthenticator((username, key, session) -> {
             if (user.equals(username)) {
@@ -144,7 +144,7 @@ public class HostConfigEntryResolverTest extends BaseTestSupport {
         });
         sshd.setPasswordAuthenticator(RejectAllPasswordAuthenticator.INSTANCE);
 
-        final String clientIdentity = getCurrentTestName();
+        String clientIdentity = getCurrentTestName();
         client.setClientIdentityLoader(new ClientIdentityLoader() {
             @Override
             public boolean isValidLocation(String location) throws IOException {
@@ -163,8 +163,8 @@ public class HostConfigEntryResolverTest extends BaseTestSupport {
         });
         PropertyResolverUtils.updateProperty(client, ClientFactoryManager.IGNORE_INVALID_IDENTITIES, false);
 
-        final String host = getClass().getSimpleName();
-        final HostConfigEntry entry = new HostConfigEntry(host, TEST_LOCALHOST, port, user);
+        String host = getClass().getSimpleName();
+        HostConfigEntry entry = new HostConfigEntry(host, TEST_LOCALHOST, port, user);
         entry.addIdentity(clientIdentity);
         client.setHostConfigEntryResolver((host1, portValue, username) -> entry);
 
@@ -182,16 +182,15 @@ public class HostConfigEntryResolverTest extends BaseTestSupport {
     public void testUseIdentitiesOnly() throws Exception {
         Path clientIdFile = assertHierarchyTargetFolderExists(getTempTargetRelativeFile(getClass().getSimpleName()));
         KeyPairProvider clientIdProvider =
-                Utils.createTestHostKeyProvider(clientIdFile.resolve(getCurrentTestName() + ".pem"));
-
-        final KeyPair specificIdentity = Utils.getFirstKeyPair(sshd);
-        final KeyPair defaultIdentity = Utils.getFirstKeyPair(clientIdProvider);
+            CommonTestSupportUtils.createTestHostKeyProvider(clientIdFile.resolve(getCurrentTestName() + ".pem"));
+        KeyPair specificIdentity = CommonTestSupportUtils.getFirstKeyPair(sshd);
+        KeyPair defaultIdentity = CommonTestSupportUtils.getFirstKeyPair(clientIdProvider);
         ValidateUtils.checkTrue(!KeyUtils.compareKeyPairs(specificIdentity, defaultIdentity),
                 "client identity not different then entry one");
         client.setKeyPairProvider(clientIdProvider);
 
-        final String user = getCurrentTestName();
-        final AtomicBoolean defaultClientIdentityAttempted = new AtomicBoolean(false);
+        String user = getCurrentTestName();
+        AtomicBoolean defaultClientIdentityAttempted = new AtomicBoolean(false);
         // make sure authentication is achieved only via the identity public key
         sshd.setPublickeyAuthenticator((username, key, session) -> {
             if (KeyUtils.compareKeys(defaultIdentity.getPublic(), key)) {
@@ -206,7 +205,7 @@ public class HostConfigEntryResolverTest extends BaseTestSupport {
         });
         sshd.setPasswordAuthenticator(RejectAllPasswordAuthenticator.INSTANCE);
 
-        final String clientIdentity = getCurrentTestName();
+        String clientIdentity = getCurrentTestName();
         HostConfigEntry entry = new HostConfigEntry(TEST_LOCALHOST, TEST_LOCALHOST, port, user);
         entry.addIdentity(clientIdentity);
         entry.setIdentitiesOnly(true);
@@ -229,7 +228,7 @@ public class HostConfigEntryResolverTest extends BaseTestSupport {
         });
         PropertyResolverUtils.updateProperty(client, ClientFactoryManager.IGNORE_INVALID_IDENTITIES, false);
 
-        final Collection<KeyPair> clientIdentities = Collections.singletonList(defaultIdentity);
+        Collection<KeyPair> clientIdentities = Collections.singletonList(defaultIdentity);
         KeyPairProvider provider = new AbstractKeyPairProvider() {
             @Override
             public Iterable<KeyPair> loadKeys() {

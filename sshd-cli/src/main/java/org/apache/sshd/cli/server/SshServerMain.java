@@ -30,17 +30,18 @@ import org.apache.sshd.common.NamedFactory;
 import org.apache.sshd.common.NamedResource;
 import org.apache.sshd.common.PropertyResolver;
 import org.apache.sshd.common.PropertyResolverUtils;
+import org.apache.sshd.common.config.ConfigFileReaderSupport;
 import org.apache.sshd.common.config.SshConfigFileReader;
 import org.apache.sshd.common.keyprovider.KeyPairProvider;
 import org.apache.sshd.common.util.GenericUtils;
-import org.apache.sshd.server.Command;
 import org.apache.sshd.server.SshServer;
 import org.apache.sshd.server.auth.pubkey.AcceptAllPublickeyAuthenticator;
+import org.apache.sshd.server.command.Command;
 import org.apache.sshd.server.config.keys.ServerIdentity;
 import org.apache.sshd.server.keyprovider.AbstractGeneratorHostKeyProvider;
 import org.apache.sshd.server.scp.ScpCommandFactory;
-import org.apache.sshd.server.shell.InteractiveProcessShellFactory;
-import org.apache.sshd.server.shell.ProcessShellFactory;
+import org.apache.sshd.server.shell.ProcessShellCommandFactory;
+import org.apache.sshd.server.shell.ShellFactory;
 
 /**
  * TODO Add javadoc
@@ -56,7 +57,6 @@ public class SshServerMain extends SshServerCliSupport {
 
     public static void main(String[] args) throws Exception {
         int port = 8000;
-        String provider;
         boolean error = false;
         String hostKeyType = AbstractGeneratorHostKeyProvider.DEFAULT_ALGORITHM;
         int hostKeySize = 0;
@@ -67,14 +67,16 @@ public class SshServerMain extends SshServerCliSupport {
         for (int i = 0; i < numArgs; i++) {
             String argName = args[i];
             if ("-p".equals(argName)) {
-                if ((i + 1) >= numArgs) {
+                i++;
+                if (i >= numArgs) {
                     System.err.println("option requires an argument: " + argName);
                     error = true;
                     break;
                 }
-                port = Integer.parseInt(args[++i]);
+                port = Integer.parseInt(args[i]);
             } else if ("-key-type".equals(argName)) {
-                if ((i + 1) >= numArgs) {
+                i++;
+                if (i >= numArgs) {
                     System.err.println("option requires an argument: " + argName);
                     error = true;
                     break;
@@ -85,9 +87,10 @@ public class SshServerMain extends SshServerCliSupport {
                     error = true;
                     break;
                 }
-                hostKeyType = args[++i].toUpperCase();
+                hostKeyType = args[i].toUpperCase();
             } else if ("-key-size".equals(argName)) {
-                if ((i + 1) >= numArgs) {
+                i++;
+                if (i >= numArgs) {
                     System.err.println("option requires an argument: " + argName);
                     error = true;
                     break;
@@ -99,27 +102,29 @@ public class SshServerMain extends SshServerCliSupport {
                     break;
                 }
 
-                hostKeySize = Integer.parseInt(args[++i]);
+                hostKeySize = Integer.parseInt(args[i]);
             } else if ("-key-file".equals(argName)) {
-                if ((i + 1) >= numArgs) {
+                i++;
+                if (i >= numArgs) {
                     System.err.println("option requires an argument: " + argName);
                     error = true;
                     break;
                 }
 
-                String keyFilePath = args[++i];
+                String keyFilePath = args[i];
                 if (keyFiles == null) {
                     keyFiles = new LinkedList<>();
                 }
                 keyFiles.add(keyFilePath);
             } else if ("-o".equals(argName)) {
-                if ((i + 1) >= numArgs) {
+                i++;
+                if (i >= numArgs) {
                     System.err.println("option requires and argument: " + argName);
                     error = true;
                     break;
                 }
 
-                String opt = args[++i];
+                String opt = args[i];
                 int idx = opt.indexOf('=');
                 if (idx <= 0) {
                     System.err.println("bad syntax for option: " + opt);
@@ -134,23 +139,15 @@ public class SshServerMain extends SshServerCliSupport {
                         keyFiles = new LinkedList<>();
                     }
                     keyFiles.add(optValue);
-                } else if (SshConfigFileReader.PORT_CONFIG_PROP.equals(optName)) {
+                } else if (ConfigFileReaderSupport.PORT_CONFIG_PROP.equals(optName)) {
                     port = Integer.parseInt(optValue);
                 } else {
                     options.put(optName, optValue);
                 }
-            } else if (argName.startsWith("-")) {
-                System.err.println("illegal option: " + argName);
-                error = true;
-                break;
-            } else {
-                System.err.println("extra argument: " + argName);
-                error = true;
-                break;
             }
         }
 
-        SshServer sshd = setupIoServiceFactory(SshServer.setUpDefaultServer(), System.err, args);
+        SshServer sshd = error ? null : setupIoServiceFactory(SshServer.setUpDefaultServer(), options, System.out, System.err, args);
         if (sshd == null) {
             error = true;
         }
@@ -164,26 +161,31 @@ public class SshServerMain extends SshServerCliSupport {
         props.putAll(options);
 
         PropertyResolver resolver = PropertyResolverUtils.toPropertyResolver(options);
-        KeyPairProvider hostKeyProvider = setupServerKeys(sshd, hostKeyType, hostKeySize, keyFiles);
+        KeyPairProvider hostKeyProvider = resolveServerKeys(System.err, hostKeyType, hostKeySize, keyFiles);
         sshd.setKeyPairProvider(hostKeyProvider);
         // Should come AFTER key pair provider setup so auto-welcome can be generated if needed
         setupServerBanner(sshd, resolver);
         sshd.setPort(port);
 
-        String macsOverride = resolver.getString(SshConfigFileReader.MACS_CONFIG_PROP);
+        String macsOverride = resolver.getString(ConfigFileReaderSupport.MACS_CONFIG_PROP);
         if (GenericUtils.isNotEmpty(macsOverride)) {
             SshConfigFileReader.configureMacs(sshd, macsOverride, true, true);
         }
 
-        sshd.setShellFactory(InteractiveProcessShellFactory.INSTANCE);
+        ShellFactory shellFactory = resolveShellFactory(System.err, resolver);
+        if (shellFactory != null) {
+            System.out.append("Using shell=").println(shellFactory.getClass().getName());
+            sshd.setShellFactory(shellFactory);
+        }
+
         sshd.setPasswordAuthenticator((username, password, session) -> Objects.equals(username, password));
         sshd.setPublickeyAuthenticator(AcceptAllPublickeyAuthenticator.INSTANCE);
         setupServerForwarding(sshd, resolver);
-        sshd.setCommandFactory(new ScpCommandFactory.Builder().withDelegate(
-            command -> new ProcessShellFactory(GenericUtils.split(command, ' ')).create()
-        ).build());
+        sshd.setCommandFactory(new ScpCommandFactory.Builder()
+            .withDelegate(ProcessShellCommandFactory.INSTANCE)
+            .build());
 
-        List<NamedFactory<Command>> subsystems = setupServerSubsystems(sshd, resolver);
+        List<NamedFactory<Command>> subsystems = resolveServerSubsystems(System.err, resolver);
         if (GenericUtils.isNotEmpty(subsystems)) {
             System.out.append("Setup subsystems=").println(NamedResource.getNames(subsystems));
             sshd.setSubsystemFactories(subsystems);

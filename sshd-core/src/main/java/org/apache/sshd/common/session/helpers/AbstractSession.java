@@ -32,6 +32,7 @@ import java.util.EnumMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableSet;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,7 +44,6 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.apache.sshd.common.AttributeStore;
 import org.apache.sshd.common.Closeable;
 import org.apache.sshd.common.Factory;
 import org.apache.sshd.common.FactoryManager;
@@ -63,6 +63,7 @@ import org.apache.sshd.common.cipher.CipherInformation;
 import org.apache.sshd.common.compression.Compression;
 import org.apache.sshd.common.compression.CompressionInformation;
 import org.apache.sshd.common.digest.Digest;
+import org.apache.sshd.common.forward.ForwardingFilter;
 import org.apache.sshd.common.forward.PortForwardingEventListener;
 import org.apache.sshd.common.future.DefaultKeyExchangeFuture;
 import org.apache.sshd.common.future.DefaultSshFuture;
@@ -77,6 +78,7 @@ import org.apache.sshd.common.kex.KeyExchange;
 import org.apache.sshd.common.mac.Mac;
 import org.apache.sshd.common.mac.MacInformation;
 import org.apache.sshd.common.random.Random;
+import org.apache.sshd.common.session.ConnectionService;
 import org.apache.sshd.common.session.ReservedSessionMessagesHandler;
 import org.apache.sshd.common.session.Session;
 import org.apache.sshd.common.session.SessionListener;
@@ -91,6 +93,7 @@ import org.apache.sshd.common.util.ValidateUtils;
 import org.apache.sshd.common.util.buffer.Buffer;
 import org.apache.sshd.common.util.buffer.BufferUtils;
 import org.apache.sshd.common.util.buffer.ByteArrayBuffer;
+import org.apache.sshd.common.util.net.SshdSocketAddress;
 
 /**
  * <P>
@@ -107,6 +110,7 @@ import org.apache.sshd.common.util.buffer.ByteArrayBuffer;
  *
  * @author <a href="mailto:dev@mina.apache.org">Apache MINA SSHD Project</a>
  */
+@SuppressWarnings("checkstyle:MethodCount")  // TODO split this big class and remove the suppression
 public abstract class AbstractSession extends AbstractKexFactoryManager implements Session {
     /**
      * Name of the property where this session is stored in the attributes of the
@@ -622,7 +626,18 @@ public abstract class AbstractSession extends AbstractKexFactoryManager implemen
                     currentService.process(cmd, buffer);
                     resetIdleTimeout();
                 } else {
-                    throw new IllegalStateException("Unsupported command " + SshConstants.getCommandMessageName(cmd));
+                    /*
+                     * According to https://tools.ietf.org/html/rfc4253#section-11.4
+                     *
+                     *      An implementation MUST respond to all unrecognized messages
+                     *      with an SSH_MSG_UNIMPLEMENTED message in the order in which
+                     *      the messages were received.
+                     */
+                    if (log.isDebugEnabled()) {
+                        log.debug("process({}) Unsupported command: {}",
+                            this, SshConstants.getCommandMessageName(cmd));
+                    }
+                    notImplemented();
                 }
                 break;
         }
@@ -1823,6 +1838,7 @@ public abstract class AbstractSession extends AbstractKexFactoryManager implemen
      *
      * @throws Exception if an error occurs
      */
+    @SuppressWarnings("checkstyle:VariableDeclarationUsageDistance")
     protected void receiveNewKeys() throws Exception {
         byte[] k = kex.getK();
         byte[] h = kex.getH();
@@ -2028,7 +2044,7 @@ public abstract class AbstractSession extends AbstractKexFactoryManager implemen
      * @see #sendNotImplemented(long)
      */
     protected IoWriteFuture notImplemented() throws IOException {
-        return sendNotImplemented(seqi - 1);
+        return sendNotImplemented(seqi - 1L);
     }
 
     /**
@@ -2233,11 +2249,6 @@ public abstract class AbstractSession extends AbstractKexFactoryManager implemen
     @SuppressWarnings("unchecked")
     public <T> T removeAttribute(AttributeKey<T> key) {
         return (T) attributes.remove(Objects.requireNonNull(key, "No key"));
-    }
-
-    @Override
-    public <T> T resolveAttribute(AttributeKey<T> key) {
-        return AttributeStore.resolveAttribute(this, key);
     }
 
     @Override
@@ -2705,6 +2716,61 @@ public abstract class AbstractSession extends AbstractKexFactoryManager implemen
         }
 
         return proposal;
+    }
+
+    protected abstract ConnectionService getConnectionService();
+
+    protected ForwardingFilter getForwardingFilter() {
+        ConnectionService service = getConnectionService();
+        return (service == null) ? null : service.getForwardingFilter();
+    }
+
+    @Override
+    public List<Map.Entry<Integer, SshdSocketAddress>> getLocalForwardsBindings() {
+        ForwardingFilter filter = getForwardingFilter();
+        return (filter == null) ? Collections.emptyList() : filter.getLocalForwardsBindings();
+    }
+
+    @Override
+    public boolean isLocalPortForwardingStartedForPort(int port) {
+        ForwardingFilter filter = getForwardingFilter();
+        return (filter != null) && filter.isLocalPortForwardingStartedForPort(port);
+    }
+
+    @Override
+    public NavigableSet<Integer> getStartedLocalPortForwards() {
+        ForwardingFilter filter = getForwardingFilter();
+        return (filter == null) ? Collections.emptyNavigableSet() : filter.getStartedLocalPortForwards();
+    }
+
+    @Override
+    public SshdSocketAddress getBoundLocalPortForward(int port) {
+        ForwardingFilter filter = getForwardingFilter();
+        return (filter == null) ? null : filter.getBoundLocalPortForward(port);
+    }
+
+    @Override
+    public List<Map.Entry<Integer, SshdSocketAddress>> getRemoteForwardsBindings() {
+        ForwardingFilter filter = getForwardingFilter();
+        return (filter == null) ? Collections.emptyList() : filter.getRemoteForwardsBindings();
+    }
+
+    @Override
+    public boolean isRemotePortForwardingStartedForPort(int port) {
+        ForwardingFilter filter = getForwardingFilter();
+        return (filter != null) && filter.isRemotePortForwardingStartedForPort(port);
+    }
+
+    @Override
+    public NavigableSet<Integer> getStartedRemotePortForwards() {
+        ForwardingFilter filter = getForwardingFilter();
+        return (filter == null) ? Collections.emptyNavigableSet() : filter.getStartedRemotePortForwards();
+    }
+
+    @Override
+    public SshdSocketAddress getBoundRemotePortForward(int port) {
+        ForwardingFilter filter = getForwardingFilter();
+        return (filter == null) ? null : filter.getBoundRemotePortForward(port);
     }
 
     /**

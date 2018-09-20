@@ -22,7 +22,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -33,7 +32,7 @@ import org.apache.sshd.common.session.Session;
 import org.apache.sshd.common.util.GenericUtils;
 import org.apache.sshd.common.util.OsUtils;
 import org.apache.sshd.common.util.logging.AbstractLoggingBean;
-import org.apache.sshd.common.util.threads.ExecutorServiceCarrier;
+import org.apache.sshd.common.util.threads.CloseableExecutorService;
 import org.apache.sshd.common.util.threads.ThreadUtils;
 import org.apache.tomcat.jni.Local;
 import org.apache.tomcat.jni.Pool;
@@ -43,7 +42,7 @@ import org.apache.tomcat.jni.Status;
 /**
  * The server side fake agent, acting as an agent, but actually forwarding the requests to the auth channel on the client side.
  */
-public class AgentServerProxy extends AbstractLoggingBean implements SshAgentServer, ExecutorServiceCarrier {
+public class AgentServerProxy extends AbstractLoggingBean implements SshAgentServer {
     /**
      * Property that can be set on the {@link Session} in order to control
      * the authentication timeout (millis). If not specified then
@@ -60,16 +59,15 @@ public class AgentServerProxy extends AbstractLoggingBean implements SshAgentSer
     private final long pool;
     private final long handle;
     private Future<?> piper;
-    private final ExecutorService pipeService;
-    private final boolean pipeCloseOnExit;
+    private final CloseableExecutorService pipeService;
     private final AtomicBoolean open = new AtomicBoolean(true);
     private final AtomicBoolean innerFinished = new AtomicBoolean(false);
 
     public AgentServerProxy(ConnectionService service) throws IOException {
-        this(service, null, false);
+        this(service, null);
     }
 
-    public AgentServerProxy(ConnectionService service, ExecutorService executor, boolean shutdownOnExit) throws IOException {
+    public AgentServerProxy(ConnectionService service, CloseableExecutorService executor) throws IOException {
         this.service = service;
         try {
             String authSocket = AprLibrary.createLocalSocketAddress();
@@ -89,8 +87,9 @@ public class AgentServerProxy extends AbstractLoggingBean implements SshAgentSer
                 throw toIOException(result);
             }
 
-            pipeService = (executor == null) ? ThreadUtils.newSingleThreadExecutor("sshd-AgentServerProxy-PIPE-" + authSocket) : executor;
-            pipeCloseOnExit = executor != pipeService || shutdownOnExit;
+            pipeService = (executor == null)
+                    ? ThreadUtils.newSingleThreadExecutor("sshd-AgentServerProxy-PIPE-" + authSocket)
+                    : ThreadUtils.noClose(executor);
             piper = pipeService.submit(() -> {
                 try {
                     boolean debugEnabled = log.isDebugEnabled();
@@ -134,14 +133,8 @@ public class AgentServerProxy extends AbstractLoggingBean implements SshAgentSer
         return open.get();
     }
 
-    @Override
-    public ExecutorService getExecutorService() {
+    public CloseableExecutorService getExecutorService() {
         return pipeService;
-    }
-
-    @Override
-    public boolean isShutdownOnExit() {
-        return pipeCloseOnExit;
     }
 
     @Override
@@ -159,28 +152,11 @@ public class AgentServerProxy extends AbstractLoggingBean implements SshAgentSer
         if (handle != 0) {
             if (!innerFinished.get()) {
                 try {
-
-                    final long tmpPool = Pool.create(AprLibrary.getInstance().getRootPool());
-                    final long tmpSocket = Local.create(authSocket, tmpPool);
-                    long connectResult = Local.connect(tmpSocket, 0L);
-
-                    if (connectResult != Status.APR_SUCCESS) {
-                        if (debugEnabled) {
-                            log.debug("Unable to connect to socket PIPE {}. APR errcode {}", authSocket, connectResult);
-                        }
-                    }
-
-                    //write a single byte -- just wake up the accept()
-                    int sendResult = Socket.send(tmpSocket, END_OF_STREAM_MESSAGE, 0, 1);
-                    if (sendResult != 1) {
-                        if (debugEnabled) {
-                            log.debug("Unable to send signal the EOS for {}. APR retcode {} != 1", authSocket, sendResult);
-                        }
-                    }
+                    signalEOS(AprLibrary.getInstance(), debugEnabled);
                 } catch (Exception e) {
                     //log eventual exceptions in debug mode
                     if (debugEnabled) {
-                        log.debug("Exception connecting to the PIPE socket: " + authSocket, e);
+                        log.debug("Exception signalling EOS to the PIPE socket: " + authSocket, e);
                     }
                 }
             }
@@ -193,14 +169,7 @@ public class AgentServerProxy extends AbstractLoggingBean implements SshAgentSer
 
         try {
             if (authSocket != null) {
-                File socketFile = new File(authSocket);
-                if (socketFile.exists()) {
-                    deleteFile(socketFile, "Deleted PIPE socket {}");
-
-                    if (OsUtils.isUNIX()) {
-                        deleteFile(socketFile.getParentFile(), "Deleted parent PIPE socket {}");
-                    }
-                }
+                removeSocketFile(authSocket, debugEnabled);
             }
         } catch (Exception e) {
             //log eventual exceptions in debug mode
@@ -217,8 +186,8 @@ public class AgentServerProxy extends AbstractLoggingBean implements SshAgentSer
             piper = null;
         }
 
-        ExecutorService executor = getExecutorService();
-        if ((executor != null) && isShutdownOnExit() && (!executor.isShutdown())) {
+        CloseableExecutorService executor = getExecutorService();
+        if ((executor != null) && (!executor.isShutdown())) {
             Collection<?> runners = executor.shutdownNow();
             if (debugEnabled) {
                 log.debug("Shut down runners count=" + GenericUtils.size(runners));
@@ -226,12 +195,48 @@ public class AgentServerProxy extends AbstractLoggingBean implements SshAgentSer
         }
     }
 
-    protected void deleteFile(File file, String msg) {
-        if (file.delete()) {
-            if (log.isDebugEnabled()) {
+    protected File removeSocketFile(String socketPath, boolean debugEnabled) throws Exception {
+        File socketFile = new File(socketPath);
+        if (socketFile.exists()) {
+            deleteFile(socketFile, "Deleted PIPE socket {}", debugEnabled);
+
+            if (OsUtils.isUNIX()) {
+                deleteFile(socketFile.getParentFile(), "Deleted parent PIPE socket {}", debugEnabled);
+            }
+        }
+
+        return socketFile;
+    }
+
+    protected void signalEOS(AprLibrary libInstance, boolean debugEnabled) throws Exception {
+        long tmpPool = Pool.create(libInstance.getRootPool());
+        long tmpSocket = Local.create(authSocket, tmpPool);
+        long connectResult = Local.connect(tmpSocket, 0L);
+
+        if (connectResult != Status.APR_SUCCESS) {
+            if (debugEnabled) {
+                log.debug("Unable to connect to socket PIPE {}. APR errcode {}", authSocket, connectResult);
+            }
+        }
+
+        // write a single byte -- just wake up the accept()
+        int sendResult = Socket.send(tmpSocket, END_OF_STREAM_MESSAGE, 0, 1);
+        if (sendResult != 1) {
+            if (debugEnabled) {
+                log.debug("Unable to send signal the EOS for {}. APR retcode {} != 1", authSocket, sendResult);
+            }
+        }
+    }
+
+    protected boolean deleteFile(File file, String msg, boolean debugEnabled) {
+        boolean success = file.delete();
+        if (success) {
+            if (debugEnabled) {
                 log.debug(msg, file);
             }
         }
+
+        return success;
     }
 
     /**

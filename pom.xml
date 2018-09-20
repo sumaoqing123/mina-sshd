@@ -28,7 +28,7 @@
 
     <groupId>org.apache.sshd</groupId>
     <artifactId>sshd</artifactId>
-    <version>2.0.0-SNAPSHOT</version>
+    <version>2.1.1-SNAPSHOT</version>
     <name>Apache Mina SSHD</name>
     <packaging>pom</packaging>
     <inceptionYear>2008</inceptionYear>
@@ -92,8 +92,9 @@
         <javac.source>${java.major.version}.${java.minor.version}</javac.source>
         <project.build.java.source>${javac.source}</project.build.java.source>
         <maven.compiler.source>${javac.source}</maven.compiler.source>
-        <ant.version>1.10.1</ant.version>
+        <ant.version>1.10.5</ant.version>
         <ant.build.javac.source>${javac.source}</ant.build.javac.source>
+        <build-helper-maven-plugin.version>3.0.0</build-helper-maven-plugin.version>
 
         <javac.target>${javac.source}</javac.target>
         <project.build.java.target>${javac.target}</project.build.java.target>
@@ -108,14 +109,18 @@
         <groovy.compliance.level>2.0</groovy.compliance.level>
         <groovy.version>${groovy.major.version}.${groovy.minor.version}.${groovy.release.version}</groovy.version>
 
-        <bouncycastle.version>1.59</bouncycastle.version>
+        <bouncycastle.version>1.60</bouncycastle.version>
         <slf4j.version>1.7.25</slf4j.version>
-        <spring.version>5.0.5.RELEASE</spring.version>
-        <jgit.version>4.11.0.201803080745-r</jgit.version>
+        <spring.version>5.0.8.RELEASE</spring.version>
+        <jgit.version>5.0.2.201807311906-r</jgit.version>
         <junit.version>4.12</junit.version>
-        <surefire.plugin.version>2.20.1</surefire.plugin.version>
+        <bytebuddy.version>1.8.17</bytebuddy.version>
+
+        <surefire.plugin.version>2.22.0</surefire.plugin.version>
+        <maven.archiver.version>3.2.0</maven.archiver.version>
+        <plexus.archiver.version>3.6.0</plexus.archiver.version>
         <!-- See https://pmd.github.io/ for available latest version -->
-        <pmd.version>6.2.0</pmd.version>
+        <pmd.version>6.6.0</pmd.version>
     </properties>
 
     <profiles>
@@ -154,6 +159,54 @@
             </build>
         </profile>
         <profile>
+                <!-- mvn -Powasp verify
+
+                    NOTE: recommend also
+
+                    * Activating 'quick' profile
+                    * Skip PMD, checkstyle
+
+                mvn -Powasp,quick -Dpmd.skip=true -Dcheckstyle.skip=true verify
+
+                -->
+            <id>owasp</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.owasp</groupId>
+                        <artifactId>dependency-check-maven</artifactId>
+                        <version>3.3.1</version>
+                            <!-- see https://jeremylong.github.io/DependencyCheck/dependency-check-maven/configuration.html -->
+                        <configuration>
+                                <!-- see https://github.com/jeremylong/DependencyCheck/issues/1394 -->
+                            <retireJsAnalyzerEnabled>false</retireJsAnalyzerEnabled>
+                            <suppressionFiles>
+                                 <suppressionFile>${workspace.root.dir}${file.separator}sshd-owasp-suppressions.xml</suppressionFile>
+                            </suppressionFiles>
+                                <!-- Not much we can do about system scope - e.g, JDK 'tools.jar' (nor do we use it) -->
+                            <skipSystemScope>true</skipSystemScope>
+                                <!-- We do not disseminate the test code nor do we expect it to be used in production sites -->
+                            <skipTestScope>true</skipTestScope>
+                                <!-- We currently don't have any .NET assemblies -->
+                            <assemblyAnalyzerEnabled>false</assemblyAnalyzerEnabled>
+                            <nuspecAnalyzerEnabled>false</nuspecAnalyzerEnabled>
+                                <!-- We take care of such checks manually/periodically -->
+                            <versionCheckEnabled>false</versionCheckEnabled>
+                        </configuration>
+                        <executions>
+                           <execution>
+                                <id>run-owasp-dependency-check</id>
+                                <!-- Note: phase must be AFTER detection of workspace root dir -->
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
             <id>javac-errorprone</id>
             <build>
                 <plugins>
@@ -182,6 +235,115 @@
                  </plugins>
             </build>
         </profile>
+        <profile>
+            <id>only-eclipse</id>
+            <activation>
+                <property>
+                    <name>m2e.version</name>
+                </property>
+            </activation>
+            <build>
+                <pluginManagement>
+                    <plugins>
+                        <!--This plugin's configuration is used to store Eclipse
+                            m2e settings only and overcome integration problems.
+                            It has no influence on the Maven build itself. -->
+                        <plugin>
+                            <groupId>org.eclipse.m2e</groupId>
+                            <artifactId>lifecycle-mapping</artifactId>
+                            <version>1.0.0</version>
+                            <configuration>
+                                <lifecycleMappingMetadata>
+                                    <pluginExecutions>
+                                        <pluginExecution>
+                                            <pluginExecutionFilter>
+                                                <groupId>org.apache.maven.plugins</groupId>
+                                                <artifactId>maven-dependency-plugin</artifactId>
+                                                <versionRange>[1.0,)</versionRange>
+                                                <goals>
+                                                    <goal>copy</goal>
+                                                    <goal>copy-dependencies</goal>
+                                                </goals>
+                                            </pluginExecutionFilter>
+                                            <action>
+                                                <execute />
+                                            </action>
+                                        </pluginExecution>
+                                        <pluginExecution>
+                                            <pluginExecutionFilter>
+                                                <groupId>org.codehaus.gmaven</groupId>
+                                                <artifactId>groovy-maven-plugin</artifactId>
+                                                <versionRange>[1.0,)</versionRange>
+                                                <goals>
+                                                    <goal>compile</goal>
+                                                    <goal>execute</goal>
+                                                    <goal>testCompile</goal>
+                                                </goals>
+                                            </pluginExecutionFilter>
+                                            <action>
+                                                <execute />
+                                            </action>
+                                        </pluginExecution>
+                                        <pluginExecution>
+                                            <pluginExecutionFilter>
+                                                <groupId>org.apache.rat</groupId>
+                                                <artifactId>apache-rat-plugin</artifactId>
+                                                <versionRange>[0.1,)</versionRange>
+                                                <goals>
+                                                    <goal>check</goal>
+                                                </goals>
+                                            </pluginExecutionFilter>
+                                            <action>
+                                                <execute />
+                                            </action>
+                                        </pluginExecution>
+                                        <pluginExecution>
+                                            <pluginExecutionFilter>
+                                                <groupId>org.apache.maven.plugins</groupId>
+                                                <artifactId>maven-checkstyle-plugin</artifactId>
+                                                <versionRange>[1.0,)</versionRange>
+                                                <goals>
+                                                    <goal>check</goal>
+                                                </goals>
+                                            </pluginExecutionFilter>
+                                            <action>
+                                                <ignore />
+                                            </action>
+                                        </pluginExecution>
+                                        <pluginExecution>
+                                            <pluginExecutionFilter>
+                                                <groupId>org.apache.maven.plugins</groupId>
+                                                <artifactId>maven-pmd-plugin</artifactId>
+                                                <versionRange>[3.9.0,)</versionRange>
+                                                <goals>
+                                                    <goal>check</goal>
+                                                </goals>
+                                            </pluginExecutionFilter>
+                                            <action>
+                                                <ignore />
+                                            </action>
+                                        </pluginExecution>
+                                        <pluginExecution>
+                                            <pluginExecutionFilter>
+                                                <groupId>org.apache.felix</groupId>
+                                                <artifactId>maven-bundle-plugin</artifactId>
+                                                <versionRange>[1.0,)</versionRange>
+                                                <goals>
+                                                    <goal>manifest</goal>
+                                                </goals>
+                                            </pluginExecutionFilter>
+                                            <action>
+                                                <execute />
+                                            </action>
+                                        </pluginExecution>
+                                    </pluginExecutions>
+                                </lifecycleMappingMetadata>
+                            </configuration>
+                        </plugin>
+                    </plugins>
+                </pluginManagement>
+            </build>
+        </profile>
     </profiles>
 
     <dependencyManagement>
@@ -191,10 +353,19 @@
                 <artifactId>groovy-all</artifactId>
                 <version>${groovy.version}</version>
             </dependency>
+                <!-- NOTE NOTE NOTE NOTE NOTE NOTE NOTE NOTE NOTE NOTE NOTE NOTE
+
+                    Upgrading it beyond 2.0.19 causes problems for the sshd-ldap
+                    since the Apache DS server used to run the unit tests fails
+                    in LdapProtocolHandler#messageReceived due to the fact that
+                    the SslFilter#SESSION_SECURED has been moved in version 2.0.18.
+
+                    See https://issues.apache.org/jira/browse/DIRMINA-1087
+                -->
             <dependency>
                 <groupId>org.apache.mina</groupId>
                 <artifactId>mina-core</artifactId>
-                <version>2.0.17</version>
+                <version>2.0.19</version>
             </dependency>
             <dependency>
                 <groupId>tomcat</groupId>
@@ -205,7 +376,7 @@
             <dependency>
                 <groupId>net.i2p.crypto</groupId>
                 <artifactId>eddsa</artifactId>
-                <version>0.2.0</version>
+                <version>0.3.0</version>
             </dependency>
 
             <dependency>
@@ -260,6 +431,23 @@
                 <version>1.1.3</version>
             </dependency>
 
+                <!-- Transitive dependencies by various 3rd party packages -->
+            <dependency>
+                <groupId>commons-io</groupId>
+                <artifactId>commons-io</artifactId>
+                <version>2.6</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-lang</groupId>
+                <artifactId>commons-lang</artifactId>
+                <version>2.6</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-collections</groupId>
+                <artifactId>commons-collections</artifactId>
+                <version>3.2.2</version>
+            </dependency>
+
             <dependency>
                 <groupId>org.springframework</groupId>
                 <artifactId>spring-framework-bom</artifactId>
@@ -304,11 +492,24 @@
                 <artifactId>junit</artifactId>
                 <version>${junit.version}</version>
             </dependency>
+
             <dependency>
                 <groupId>org.mockito</groupId>
                 <artifactId>mockito-core</artifactId>
-                <version>2.15.0</version>
+                <version>2.21.0</version>
             </dependency>
+                <!-- Used by mockito -->
+            <dependency>
+                <groupId>net.bytebuddy</groupId>
+                <artifactId>byte-buddy</artifactId>
+                <version>${bytebuddy.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.bytebuddy</groupId>
+                <artifactId>byte-buddy-agent</artifactId>
+                <version>${bytebuddy.version}</version>
+            </dependency>
+
             <dependency>
                 <groupId>net.sf.jpam</groupId>
                 <artifactId>jpam</artifactId>
@@ -328,7 +529,7 @@
             <dependency>
                 <groupId>org.apache.httpcomponents</groupId>
                 <artifactId>httpclient</artifactId>
-                <version>4.5.5</version>
+                <version>4.5.6</version>
                 <exclusions>
                     <exclusion>    <!-- we are using jcl-over-slf4j -->
                         <groupId>commons-logging</groupId>
@@ -339,7 +540,7 @@
             <dependency>
                 <groupId>org.apache.httpcomponents</groupId>
                 <artifactId>httpcore</artifactId>
-                <version>4.4.9</version>
+                <version>4.4.10</version>
             </dependency>
             <dependency>
                 <groupId>ch.ethz.ganymed</groupId>
@@ -367,104 +568,26 @@
     <build>
         <pluginManagement>
             <plugins>
-                <!--This plugin's configuration is used to store Eclipse
-                    m2e settings only and overcome integration problems.
-                    It has no influence on the Maven build itself. -->
-                <plugin>
-                    <groupId>org.eclipse.m2e</groupId>
-                    <artifactId>lifecycle-mapping</artifactId>
-                    <version>1.0.0</version>
-                    <configuration>
-                        <lifecycleMappingMetadata>
-                            <pluginExecutions>
-                                <pluginExecution>
-                                    <pluginExecutionFilter>
-                                        <groupId>org.apache.maven.plugins</groupId>
-                                        <artifactId>maven-dependency-plugin</artifactId>
-                                        <versionRange>[1.0,)</versionRange>
-                                        <goals>
-                                            <goal>copy</goal>
-                                            <goal>copy-dependencies</goal>
-                                        </goals>
-                                    </pluginExecutionFilter>
-                                    <action>
-                                        <execute />
-                                    </action>
-                                </pluginExecution>
-                                <pluginExecution>
-                                    <pluginExecutionFilter>
-                                        <groupId>org.codehaus.gmaven</groupId>
-                                        <artifactId>groovy-maven-plugin</artifactId>
-                                        <versionRange>[1.0,)</versionRange>
-                                        <goals>
-                                            <goal>compile</goal>
-                                            <goal>execute</goal>
-                                            <goal>testCompile</goal>
-                                        </goals>
-                                    </pluginExecutionFilter>
-                                    <action>
-                                        <execute />
-                                    </action>
-                                </pluginExecution>
-                                <pluginExecution>
-                                    <pluginExecutionFilter>
-                                        <groupId>org.apache.rat</groupId>
-                                        <artifactId>apache-rat-plugin</artifactId>
-                                        <versionRange>[0.1,)</versionRange>
-                                        <goals>
-                                            <goal>check</goal>
-                                        </goals>
-                                    </pluginExecutionFilter>
-                                    <action>
-                                        <execute />
-                                    </action>
-                                </pluginExecution>
-                                <pluginExecution>
-                                    <pluginExecutionFilter>
-                                        <groupId>org.apache.maven.plugins</groupId>
-                                        <artifactId>maven-checkstyle-plugin</artifactId>
-                                        <versionRange>[1.0,)</versionRange>
-                                        <goals>
-                                            <goal>check</goal>
-                                        </goals>
-                                    </pluginExecutionFilter>
-                                    <action>
-                                        <ignore />
-                                    </action>
-                                </pluginExecution>
-                                <pluginExecution>
-                                    <pluginExecutionFilter>
-                                        <groupId>org.apache.felix</groupId>
-                                        <artifactId>maven-bundle-plugin</artifactId>
-                                        <versionRange>[1.0,)</versionRange>
-                                        <goals>
-                                            <goal>manifest</goal>
-                                        </goals>
-                                    </pluginExecutionFilter>
-                                    <action>
-                                        <execute />
-                                    </action>
-                                </pluginExecution>
-                            </pluginExecutions>
-                        </lifecycleMappingMetadata>
-                    </configuration>
-                </plugin>
                 <plugin>
                     <groupId>org.apache.rat</groupId>
                     <artifactId>apache-rat-plugin</artifactId>
                     <version>0.12</version>
                     <configuration>
                         <excludes>
-                            <exclude>**/*.iml</exclude>
                             <exclude>README.md</exclude>
-                            <exclude>*pmd*</exclude>
                             <exclude>src/docs/**</exclude>
                             <exclude>src/test/resources/**</exclude>
                             <exclude>**/stty-output-*.txt</exclude>
                             <exclude>*checkstyle*</exclude>
                             <exclude>*findbugs*</exclude>
+                            <exclude>*suppressions*</exclude>
                             <exclude>**/big-msg.txt</exclude>
-                                <!-- Eclipse files -->
+                            <exclude>LICENSE*</exclude>
+                            <exclude>NOTICE*</exclude>
+                                <!-- IDE files -->
+                            <exclude>*pmd*</exclude>
+                            <exclude>*.ser</exclude>
+                            <exclude>*.iml</exclude>
                             <exclude>.metadata/**</exclude>
                             <exclude>.recommenders/**</exclude>
                             <exclude>RemoteSystemsTempFiles/**</exclude>
@@ -473,8 +596,6 @@
                             <exclude>.springBeans</exclude>
                             <exclude>.settings/**</exclude>
                             <exclude>.repository/**</exclude>
-                            <exclude>LICENSE*</exclude>
-                            <exclude>NOTICE*</exclude>
                         </excludes>
                     </configuration>
                 </plugin>
@@ -515,12 +636,12 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-resources-plugin</artifactId>
-                    <version>3.0.1</version>
+                    <version>3.1.0</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-clean-plugin</artifactId>
-                    <version>3.0.0</version>
+                    <version>3.1.0</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
@@ -530,7 +651,10 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-javadoc-plugin</artifactId>
-                    <version>2.10.4</version>
+                    <version>3.0.1</version>
+                    <configuration>
+                        <additionalOptions>-Xdoclint:none </additionalOptions>
+                    </configuration>
                 </plugin>
                 <plugin>
                     <groupId>org.codehaus.gmaven</groupId>
@@ -579,7 +703,7 @@
                         <dependency>
                             <groupId>com.puppycrawl.tools</groupId>
                             <artifactId>checkstyle</artifactId>
-                            <version>8.9</version>
+                            <version>8.12</version>
                             <exclusions>
                                 <!-- MCHECKSTYLE-156 -->
                                 <exclusion>
@@ -614,7 +738,7 @@
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
                     <artifactId>findbugs-maven-plugin</artifactId>
-                    <version>3.0.4</version>
+                    <version>3.0.5</version>
                         <!-- see https://www.petrikainulainen.net/programming/maven/findbugs-maven-plugin-tutorial/ -->
                     <configuration>
                         <effort>Max</effort>
@@ -686,6 +810,7 @@
                        <printFailingErrors>true</printFailingErrors>
                        <skipPmdError>false</skipPmdError>
                        <analysisCache>true</analysisCache> <!-- enable incremental analysis -->
+                       <showPmdLog>false</showPmdLog>
                        <excludeRoots>
                            <excludeRoot>target/generated-sources/java</excludeRoot>
                        </excludeRoots>
@@ -703,6 +828,16 @@
                        </dependency>
                    </dependencies>
                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>3.1.1</version>
+                </plugin>
             </plugins>
         </pluginManagement>
 
@@ -748,6 +883,8 @@
                 <configuration>
                     <configLocation>${workspace.root.dir}${file.separator}sshd-checkstyle.xml</configLocation>
                     <headerLocation>${workspace.root.dir}${file.separator}java-checkstyle-license-header.txt</headerLocation>
+                    <suppressionsLocation>${workspace.root.dir}${file.separator}sshd-checkstyle-suppressions.xml</suppressionsLocation>
+                    <includeTestSourceDirectory>true</includeTestSourceDirectory>
                 </configuration>
                 <executions>
                     <execution>
@@ -797,7 +934,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
-                <version>1.4.1</version>
+                <version>3.0.0-M2</version>
                 <executions>
                     <execution>
                         <id>enforce-versions</id>
@@ -899,7 +1036,7 @@
             <plugin>
                 <groupId>org.apache.felix</groupId>
                 <artifactId>maven-bundle-plugin</artifactId>
-                <version>3.2.0</version>
+                <version>3.5.0</version>
                 <inherited>true</inherited>
                 <extensions>true</extensions>
                 <executions>
@@ -920,18 +1057,29 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
-                <version>3.0.2</version>
+                <version>3.1.0</version>
                 <inherited>true</inherited>
                 <configuration>
                     <archive>
                         <manifestFile>${project.build.outputDirectory}/META-INF/MANIFEST.MF</manifestFile>
                     </archive>
                 </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.apache.maven</groupId>
+                        <artifactId>maven-archiver</artifactId>
+                        <version>${maven.archiver.version}</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>org.codehaus.plexus</groupId>
+                        <artifactId>plexus-archiver</artifactId>
+                        <version>${plexus.archiver.version}</version>
+                    </dependency>
+                </dependencies>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>${surefire.plugin.version}</version>
                 <configuration>
                     <redirectTestOutputToFile>true</redirectTestOutputToFile>
                     <includes>
@@ -965,13 +1113,13 @@
                     </dependency>
                 </dependencies>
             </plugin>
-                <!-- Automatically remove artifacts from local repository on clean -->
+            <!-- Automatically remove artifacts from local repository on clean -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>build-helper-maven-plugin</artifactId>
-                <version>3.0.0</version>
-                 <executions>
-                      <execution>
+                <version>${build-helper-maven-plugin.version}</version>
+                <executions>
+                    <execution>
                         <id>remove-previous-artifact</id>
                         <phase>clean</phase>
                         <goals>
@@ -980,7 +1128,7 @@
                         <configuration>
                             <removeAll>false</removeAll>
                         </configuration>
-                      </execution>
+                    </execution>
                 </executions>
             </plugin>
         </plugins>
@@ -1005,10 +1153,13 @@
     </reporting>
 
     <modules>
+        <module>sshd-common</module>
+        <module>sshd-putty</module>
         <module>sshd-core</module>
-        <module>sshd-sftp</module>
         <module>sshd-mina</module>
         <module>sshd-netty</module>
+        <module>sshd-scp</module>
+        <module>sshd-sftp</module>
         <module>sshd-ldap</module>
         <module>sshd-git</module>
         <module>sshd-contrib</module>

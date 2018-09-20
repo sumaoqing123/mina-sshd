@@ -31,7 +31,6 @@ import java.nio.channels.Channel;
 public interface SimpleClient
         extends SimpleClientConfigurator,
                 SimpleSessionClient,
-                SimpleScpClient,
                 Channel {
     // marker interface
 }

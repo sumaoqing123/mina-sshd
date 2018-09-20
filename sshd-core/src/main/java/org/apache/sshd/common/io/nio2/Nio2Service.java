@@ -39,6 +39,7 @@ import org.apache.sshd.common.FactoryManagerHolder;
 import org.apache.sshd.common.PropertyResolver;
 import org.apache.sshd.common.io.IoHandler;
 import org.apache.sshd.common.io.IoService;
+import org.apache.sshd.common.io.IoServiceEventListener;
 import org.apache.sshd.common.io.IoSession;
 import org.apache.sshd.common.util.GenericUtils;
 import org.apache.sshd.common.util.closeable.AbstractInnerCloseable;
@@ -48,26 +49,25 @@ import org.apache.sshd.common.util.closeable.AbstractInnerCloseable;
  */
 public abstract class Nio2Service extends AbstractInnerCloseable implements IoService, FactoryManagerHolder {
     // Note: order may be important so that's why we use a LinkedHashMap
-    public static final Map<String, SimpleImmutableEntry<SocketOption<?>, Object>> CONFIGURABLE_OPTIONS =
-            Collections.unmodifiableMap(new LinkedHashMap<String, SimpleImmutableEntry<SocketOption<?>, Object>>() {
-                // Not serializing it
-                private static final long serialVersionUID = 1L;
+    public static final Map<String, SimpleImmutableEntry<SocketOption<?>, Object>> CONFIGURABLE_OPTIONS;
 
-                {
-                    put(FactoryManager.SOCKET_KEEPALIVE, new SimpleImmutableEntry<>(StandardSocketOptions.SO_KEEPALIVE, null));
-                    put(FactoryManager.SOCKET_LINGER, new SimpleImmutableEntry<>(StandardSocketOptions.SO_LINGER, null));
-                    put(FactoryManager.SOCKET_RCVBUF, new SimpleImmutableEntry<>(StandardSocketOptions.SO_RCVBUF, null));
-                    put(FactoryManager.SOCKET_REUSEADDR, new SimpleImmutableEntry<>(StandardSocketOptions.SO_REUSEADDR, DEFAULT_REUSE_ADDRESS));
-                    put(FactoryManager.SOCKET_SNDBUF, new SimpleImmutableEntry<>(StandardSocketOptions.SO_SNDBUF, null));
-                    put(FactoryManager.TCP_NODELAY, new SimpleImmutableEntry<>(StandardSocketOptions.TCP_NODELAY, null));
-                }
-            });
+    static {
+        Map<String, SimpleImmutableEntry<SocketOption<?>, Object>> map = new LinkedHashMap<>();
+        map.put(FactoryManager.SOCKET_KEEPALIVE, new SimpleImmutableEntry<>(StandardSocketOptions.SO_KEEPALIVE, null));
+        map.put(FactoryManager.SOCKET_LINGER, new SimpleImmutableEntry<>(StandardSocketOptions.SO_LINGER, null));
+        map.put(FactoryManager.SOCKET_RCVBUF, new SimpleImmutableEntry<>(StandardSocketOptions.SO_RCVBUF, null));
+        map.put(FactoryManager.SOCKET_REUSEADDR, new SimpleImmutableEntry<>(StandardSocketOptions.SO_REUSEADDR, DEFAULT_REUSE_ADDRESS));
+        map.put(FactoryManager.SOCKET_SNDBUF, new SimpleImmutableEntry<>(StandardSocketOptions.SO_SNDBUF, null));
+        map.put(FactoryManager.TCP_NODELAY, new SimpleImmutableEntry<>(StandardSocketOptions.TCP_NODELAY, null));
+        CONFIGURABLE_OPTIONS = Collections.unmodifiableMap(map);
+    }
 
     protected final Map<Long, IoSession> sessions;
     protected final AtomicBoolean disposing = new AtomicBoolean();
     private final FactoryManager manager;
     private final IoHandler handler;
     private final AsynchronousChannelGroup group;
+    private IoServiceEventListener eventListener;
 
     protected Nio2Service(FactoryManager manager, IoHandler handler, AsynchronousChannelGroup group) {
         if (log.isTraceEnabled()) {
@@ -77,6 +77,16 @@ public abstract class Nio2Service extends AbstractInnerCloseable implements IoSe
         this.handler = Objects.requireNonNull(handler, "No I/O handler provided");
         this.group = Objects.requireNonNull(group, "No async. channel group provided");
         this.sessions = new ConcurrentHashMap<>();
+    }
+
+    @Override
+    public IoServiceEventListener getIoServiceEventListener() {
+        return eventListener;
+    }
+
+    @Override
+    public void setIoServiceEventListener(IoServiceEventListener listener) {
+        eventListener = listener;
     }
 
     protected AsynchronousChannelGroup getChannelGroup() {

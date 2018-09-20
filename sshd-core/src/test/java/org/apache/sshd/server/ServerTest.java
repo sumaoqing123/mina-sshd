@@ -65,13 +65,13 @@ import org.apache.sshd.common.session.helpers.AbstractConnectionService;
 import org.apache.sshd.common.session.helpers.AbstractSession;
 import org.apache.sshd.common.util.GenericUtils;
 import org.apache.sshd.common.util.OsUtils;
-import org.apache.sshd.common.util.ValidateUtils;
 import org.apache.sshd.deprecated.ClientUserAuthServiceOld;
 import org.apache.sshd.server.auth.keyboard.InteractiveChallenge;
 import org.apache.sshd.server.auth.keyboard.KeyboardInteractiveAuthenticator;
 import org.apache.sshd.server.auth.keyboard.PromptEntry;
 import org.apache.sshd.server.auth.password.RejectAllPasswordAuthenticator;
 import org.apache.sshd.server.auth.pubkey.RejectAllPublickeyAuthenticator;
+import org.apache.sshd.server.command.Command;
 import org.apache.sshd.server.session.ServerSession;
 import org.apache.sshd.server.session.ServerSessionImpl;
 import org.apache.sshd.util.test.BaseTestSupport;
@@ -277,7 +277,7 @@ public class ServerTest extends BaseTestSupport {
     public void testServerIdleTimeoutWithForce() throws Exception {
         final CountDownLatch latch = new CountDownLatch(1);
 
-        sshd.setCommandFactory(new StreamCommand.Factory());
+        sshd.setCommandFactory(StreamCommand::new);
 
         final long idleTimeoutValue = TimeUnit.SECONDS.toMillis(5L);
         PropertyResolverUtils.updateProperty(sshd, FactoryManager.IDLE_TIMEOUT, idleTimeoutValue);
@@ -326,7 +326,7 @@ public class ServerTest extends BaseTestSupport {
             assertTrue("No changes in open channels", channelListener.waitForOpenChannelsChange(5L, TimeUnit.SECONDS));
 
             try (AbstractSession serverSession = sshd.getActiveSessions().iterator().next()) {
-                AbstractConnectionService<?> service = serverSession.getService(AbstractConnectionService.class);
+                AbstractConnectionService service = serverSession.getService(AbstractConnectionService.class);
                 Collection<? extends Channel> channels = service.getChannels();
 
                 try (Channel channel = channels.iterator().next()) {
@@ -522,43 +522,39 @@ public class ServerTest extends BaseTestSupport {
     @Test   // see SSHD-645
     public void testChannelStateChangeNotifications() throws Exception {
         final Semaphore exitSignal = new Semaphore(0);
-        sshd.setCommandFactory(command -> {
-            ValidateUtils.checkTrue(String.CASE_INSENSITIVE_ORDER.compare(command, getCurrentTestName()) == 0, "Unexpected command: %s", command);
+        sshd.setCommandFactory(command -> new Command() {
+            private ExitCallback cb;
 
-            return new Command() {
-                private ExitCallback cb;
+            @Override
+            public void setOutputStream(OutputStream out) {
+                // ignored
+            }
 
-                @Override
-                public void setOutputStream(OutputStream out) {
-                    // ignored
-                }
+            @Override
+            public void setInputStream(InputStream in) {
+                // ignored
+            }
 
-                @Override
-                public void setInputStream(InputStream in) {
-                    // ignored
-                }
+            @Override
+            public void setExitCallback(ExitCallback callback) {
+                cb = callback;
+            }
 
-                @Override
-                public void setExitCallback(ExitCallback callback) {
-                    cb = callback;
-                }
+            @Override
+            public void setErrorStream(OutputStream err) {
+                // ignored
+            }
 
-                @Override
-                public void setErrorStream(OutputStream err) {
-                    // ignored
-                }
+            @Override
+            public void destroy() {
+                // ignored
+            }
 
-                @Override
-                public void destroy() {
-                    // ignored
-                }
-
-                @Override
-                public void start(Environment env) throws IOException {
-                    exitSignal.release();
-                    cb.onExit(0, command);
-                }
-            };
+            @Override
+            public void start(Environment env) throws IOException {
+                exitSignal.release();
+                cb.onExit(0, command);
+            }
         });
         sshd.start();
         client.start();
@@ -595,46 +591,42 @@ public class ServerTest extends BaseTestSupport {
     @Test
     public void testEnvironmentVariablesPropagationToServer() throws Exception {
         final AtomicReference<Environment> envHolder = new AtomicReference<>(null);
-        sshd.setCommandFactory(command -> {
-            ValidateUtils.checkTrue(String.CASE_INSENSITIVE_ORDER.compare(command, getCurrentTestName()) == 0, "Unexpected command: %s", command);
+        sshd.setCommandFactory(command -> new Command() {
+            private ExitCallback cb;
 
-            return new Command() {
-                private ExitCallback cb;
+            @Override
+            public void setOutputStream(OutputStream out) {
+                // ignored
+            }
 
-                @Override
-                public void setOutputStream(OutputStream out) {
-                    // ignored
+            @Override
+            public void setInputStream(InputStream in) {
+                // ignored
+            }
+
+            @Override
+            public void setExitCallback(ExitCallback callback) {
+                cb = callback;
+            }
+
+            @Override
+            public void setErrorStream(OutputStream err) {
+                // ignored
+            }
+
+            @Override
+            public void destroy() {
+                // ignored
+            }
+
+            @Override
+            public void start(Environment env) throws IOException {
+                if (envHolder.getAndSet(env) != null) {
+                    throw new StreamCorruptedException("Multiple starts for command=" + command);
                 }
 
-                @Override
-                public void setInputStream(InputStream in) {
-                    // ignored
-                }
-
-                @Override
-                public void setExitCallback(ExitCallback callback) {
-                    cb = callback;
-                }
-
-                @Override
-                public void setErrorStream(OutputStream err) {
-                    // ignored
-                }
-
-                @Override
-                public void destroy() {
-                    // ignored
-                }
-
-                @Override
-                public void start(Environment env) throws IOException {
-                    if (envHolder.getAndSet(env) != null) {
-                        throw new StreamCorruptedException("Multiple starts for command=" + command);
-                    }
-
-                    cb.onExit(0, command);
-                }
-            };
+                cb.onExit(0, command);
+            }
         });
 
         TestChannelListener channelListener = new TestChannelListener(getCurrentTestName());
@@ -932,13 +924,6 @@ public class ServerTest extends BaseTestSupport {
         // CHECKSTYLE:OFF
         public static CountDownLatch latch;
         // CHECKSTYLE:ON
-
-        public static class Factory implements CommandFactory {
-            @Override
-            public Command createCommand(String name) {
-                return new StreamCommand(name);
-            }
-        }
 
         private final String name;
         private OutputStream out;

@@ -65,7 +65,7 @@ import org.apache.sshd.common.cipher.Cipher;
 import org.apache.sshd.common.compression.BuiltinCompressions;
 import org.apache.sshd.common.compression.Compression;
 import org.apache.sshd.common.config.CompressionConfigValue;
-import org.apache.sshd.common.config.SshConfigFileReader;
+import org.apache.sshd.common.config.ConfigFileReaderSupport;
 import org.apache.sshd.common.config.keys.BuiltinIdentities;
 import org.apache.sshd.common.config.keys.KeyUtils;
 import org.apache.sshd.common.config.keys.PublicKeyEntry;
@@ -93,6 +93,7 @@ public abstract class SshClientCliSupport extends CliSupport {
 
     public static boolean isArgumentedOption(String portOption, String argName) {
         return portOption.equals(argName)
+             || "-io".equals(argName)
              || "-i".equals(argName)
              || "-o".equals(argName)
              || "-l".equals(argName)
@@ -121,12 +122,13 @@ public abstract class SshClientCliSupport extends CliSupport {
             String argName = args[i];
             String argVal = null;
             if (isArgumentedOption(portOption, argName)) {
-                if ((i + 1) >= numArgs) {
+                i++;
+                if (i >= numArgs) {
                     error = showError(stderr, "option requires an argument: " + argName);
                     break;
                 }
 
-                argVal = args[++i];
+                argVal = args[i];
             }
 
             if (portOption.equals(argName)) {
@@ -234,7 +236,7 @@ public abstract class SshClientCliSupport extends CliSupport {
             }
 
             if (port <= 0) {
-                port = SshConfigFileReader.DEFAULT_PORT;
+                port = ConfigFileReaderSupport.DEFAULT_PORT;
             }
 
             // TODO use a configurable wait time
@@ -266,11 +268,12 @@ public abstract class SshClientCliSupport extends CliSupport {
         }
     }
 
-    public static SshClient setupDefaultClient(PrintStream stderr, String... args) {
-        return setupIoServiceFactory(SshClient.setUpDefaultClient(), System.err, args);
+    public static SshClient setupDefaultClient(Map<String, ?> options, PrintStream stdout, PrintStream stderr, String... args) {
+        return setupIoServiceFactory(SshClient.setUpDefaultClient(), options, stdout, stderr, args);
     }
 
     // returns null if error encountered
+    @SuppressWarnings("checkstyle:ParameterNumber")
     public static SshClient setupClient(
             Map<String, Object> options,
             List<NamedFactory<Cipher>> ciphers,
@@ -302,7 +305,7 @@ public abstract class SshClientCliSupport extends CliSupport {
             }
         }
 
-        SshClient client = setupDefaultClient(stderr, args);
+        SshClient client = setupDefaultClient(options, stdout, stderr, args);
         if (client == null) {
             return null;
         }
@@ -421,7 +424,7 @@ public abstract class SshClientCliSupport extends CliSupport {
         }
 
         String strictValue = Objects.toString(options.remove(KnownHostsServerKeyVerifier.STRICT_CHECKING_OPTION), "true");
-        if (!SshConfigFileReader.parseBooleanValue(strictValue)) {
+        if (!ConfigFileReaderSupport.parseBooleanValue(strictValue)) {
             return current;
         }
 
@@ -503,7 +506,7 @@ public abstract class SshClientCliSupport extends CliSupport {
     }
 
     public static List<NamedFactory<Compression>> setupCompressions(PropertyResolver options, PrintStream stderr) {
-        String argVal = PropertyResolverUtils.getString(options, SshConfigFileReader.COMPRESSION_PROP);
+        String argVal = PropertyResolverUtils.getString(options, ConfigFileReaderSupport.COMPRESSION_PROP);
         if (GenericUtils.isEmpty(argVal)) {
             return Collections.emptyList();
         }
@@ -540,10 +543,10 @@ public abstract class SshClientCliSupport extends CliSupport {
     }
 
     public static List<NamedFactory<Mac>> setupMacs(PropertyResolver options, PrintStream stderr) {
-        String argVal = PropertyResolverUtils.getString(options, SshConfigFileReader.MACS_CONFIG_PROP);
+        String argVal = PropertyResolverUtils.getString(options, ConfigFileReaderSupport.MACS_CONFIG_PROP);
         return GenericUtils.isEmpty(argVal)
              ? Collections.emptyList()
-             : setupMacs(SshConfigFileReader.MACS_CONFIG_PROP, argVal, null, stderr);
+             : setupMacs(ConfigFileReaderSupport.MACS_CONFIG_PROP, argVal, null, stderr);
     }
 
     public static List<NamedFactory<Mac>> setupMacs(String argName, String argVal, List<NamedFactory<Mac>> current, PrintStream stderr) {
@@ -568,10 +571,10 @@ public abstract class SshClientCliSupport extends CliSupport {
     }
 
     public static List<NamedFactory<Cipher>> setupCiphers(PropertyResolver options, PrintStream stderr) {
-        String argVal = PropertyResolverUtils.getString(options, SshConfigFileReader.CIPHERS_CONFIG_PROP);
+        String argVal = PropertyResolverUtils.getString(options, ConfigFileReaderSupport.CIPHERS_CONFIG_PROP);
         return GenericUtils.isEmpty(argVal)
              ? Collections.emptyList()
-             : setupCiphers(SshConfigFileReader.CIPHERS_CONFIG_PROP, argVal, null, stderr);
+             : setupCiphers(ConfigFileReaderSupport.CIPHERS_CONFIG_PROP, argVal, null, stderr);
     }
 
     // returns null - e.g., re-specified or no supported cipher found

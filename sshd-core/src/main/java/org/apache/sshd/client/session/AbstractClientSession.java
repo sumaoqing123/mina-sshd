@@ -40,8 +40,6 @@ import org.apache.sshd.client.channel.ChannelShell;
 import org.apache.sshd.client.channel.ChannelSubsystem;
 import org.apache.sshd.client.channel.ClientChannel;
 import org.apache.sshd.client.keyverifier.ServerKeyVerifier;
-import org.apache.sshd.client.scp.DefaultScpClient;
-import org.apache.sshd.client.scp.ScpClient;
 import org.apache.sshd.common.FactoryManager;
 import org.apache.sshd.common.NamedFactory;
 import org.apache.sshd.common.NamedResource;
@@ -59,8 +57,6 @@ import org.apache.sshd.common.io.IoSession;
 import org.apache.sshd.common.io.IoWriteFuture;
 import org.apache.sshd.common.kex.KexProposalOption;
 import org.apache.sshd.common.kex.KexState;
-import org.apache.sshd.common.scp.ScpFileOpener;
-import org.apache.sshd.common.scp.ScpTransferEventListener;
 import org.apache.sshd.common.session.ConnectionService;
 import org.apache.sshd.common.session.Session;
 import org.apache.sshd.common.session.helpers.AbstractConnectionService;
@@ -82,14 +78,12 @@ public abstract class AbstractClientSession extends AbstractSession implements C
     private UserInteraction userInteraction;
     private PasswordIdentityProvider passwordIdentityProvider;
     private List<NamedFactory<UserAuth>> userAuthFactories;
-    private ScpTransferEventListener scpListener;
-    private ScpFileOpener scpOpener;
     private SocketAddress connectAddress;
     private ClientProxyConnector proxyConnector;
 
     protected AbstractClientSession(ClientFactoryManager factoryManager, IoSession ioSession) {
         super(false, factoryManager, ioSession);
-        identitiesProvider = AuthenticationIdentitiesProvider.wrap(identities);
+        identitiesProvider = AuthenticationIdentitiesProvider.wrapIdentities(identities);
     }
 
     @Override
@@ -296,33 +290,9 @@ public abstract class AbstractClientSession extends AbstractSession implements C
         return getService(ClientUserAuthService.class);
     }
 
+    @Override
     protected ConnectionService getConnectionService() {
         return getService(ConnectionService.class);
-    }
-
-    @Override
-    public ScpFileOpener getScpFileOpener() {
-        return resolveEffectiveProvider(ScpFileOpener.class, scpOpener, getFactoryManager().getScpFileOpener());
-    }
-
-    @Override
-    public void setScpFileOpener(ScpFileOpener opener) {
-        scpOpener = opener;
-    }
-
-    @Override
-    public ScpTransferEventListener getScpTransferEventListener() {
-        return scpListener;
-    }
-
-    @Override
-    public void setScpTransferEventListener(ScpTransferEventListener listener) {
-        scpListener = listener;
-    }
-
-    @Override
-    public ScpClient createScpClient(ScpFileOpener opener, ScpTransferEventListener listener) {
-        return new DefaultScpClient(this, opener, listener);
     }
 
     @Override
@@ -361,6 +331,7 @@ public abstract class AbstractClientSession extends AbstractSession implements C
         filter.stopDynamicPortForwarding(local);
     }
 
+    @Override
     protected ForwardingFilter getForwardingFilter() {
         ConnectionService service = Objects.requireNonNull(getConnectionService(), "No connection service");
         return Objects.requireNonNull(service.getForwardingFilter(), "No forwarder");
@@ -472,8 +443,8 @@ public abstract class AbstractClientSession extends AbstractSession implements C
 
     @Override
     public KeyExchangeFuture switchToNoneCipher() throws IOException {
-        if (!(currentService instanceof AbstractConnectionService<?>)
-                || !GenericUtils.isEmpty(((AbstractConnectionService<?>) currentService).getChannels())) {
+        if (!(currentService instanceof AbstractConnectionService)
+                || !GenericUtils.isEmpty(((AbstractConnectionService) currentService).getChannels())) {
             throw new IllegalStateException("The switch to the none cipher must be done immediately after authentication");
         }
 

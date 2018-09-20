@@ -62,22 +62,22 @@ import org.apache.sshd.common.util.buffer.ByteArrayBuffer;
 import org.apache.sshd.common.util.closeable.IoBaseCloseable;
 import org.apache.sshd.common.util.io.IoUtils;
 import org.apache.sshd.common.util.io.LoggingFilterOutputStream;
-import org.apache.sshd.server.AsyncCommand;
 import org.apache.sshd.server.ChannelSessionAware;
-import org.apache.sshd.server.Command;
-import org.apache.sshd.server.CommandFactory;
 import org.apache.sshd.server.Environment;
 import org.apache.sshd.server.ServerFactoryManager;
 import org.apache.sshd.server.SessionAware;
 import org.apache.sshd.server.Signal;
 import org.apache.sshd.server.StandardEnvironment;
+import org.apache.sshd.server.command.AsyncCommand;
+import org.apache.sshd.server.command.Command;
+import org.apache.sshd.server.command.CommandFactory;
 import org.apache.sshd.server.forward.AgentForwardingFilter;
 import org.apache.sshd.server.forward.X11ForwardingFilter;
 import org.apache.sshd.server.session.ServerSession;
 import org.apache.sshd.server.x11.X11ForwardSupport;
 
 /**
- * TODO Add javadoc
+ * TODO Add javadocWindowInitTest
  *
  * @author <a href="mailto:dev@mina.apache.org">Apache MINA SSHD Project</a>
  */
@@ -102,9 +102,14 @@ public class ChannelSession extends AbstractServerChannel {
     }
 
     public ChannelSession(Collection<? extends RequestHandler<Channel>> handlers) {
-        super(handlers);
+        super("", handlers, null);
 
         commandExitFuture = new DefaultCloseFuture(getClass().getSimpleName(), lock);
+    }
+
+    @Override
+    public ServerSession getSession() {
+        return (ServerSession) super.getSession();
     }
 
     @Override
@@ -118,8 +123,9 @@ public class ChannelSession extends AbstractServerChannel {
     @Override
     protected Closeable getInnerCloseable() {
         return builder()
-                .sequential(new CommandCloseable(), new GracefulChannelCloseable())
+                .sequential(new CommandCloseable(), super.getInnerCloseable())
                 .parallel(asyncOut, asyncErr)
+                .run(toString(), this::closeImmediately0)
                 .build();
     }
 
@@ -185,8 +191,7 @@ public class ChannelSession extends AbstractServerChannel {
         }
     }
 
-    @Override
-    protected void doCloseImmediately() {
+    protected void closeImmediately0() {
         boolean debugEnabled = log.isDebugEnabled();
         if (commandInstance != null) {
             try {
@@ -218,8 +223,6 @@ public class ChannelSession extends AbstractServerChannel {
                 }
             }
         }
-
-        super.doCloseImmediately();
     }
 
     @Override
@@ -602,7 +605,7 @@ public class ChannelSession extends AbstractServerChannel {
     /**
      * For {@link Command} to install {@link ChannelDataReceiver}.
      * When you do this, {@link Command#setInputStream(java.io.InputStream)} or
-     * {@link org.apache.sshd.server.AsyncCommand#setIoInputStream(org.apache.sshd.common.io.IoInputStream)}
+     * {@link org.apache.sshd.server.command.AsyncCommand#setIoInputStream(org.apache.sshd.common.io.IoInputStream)}
      * will no longer be invoked. If you call this method from {@link Command#start(Environment)},
      * the input stream you received in {@link Command#setInputStream(java.io.InputStream)} will
      * not read any data.

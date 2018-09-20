@@ -35,7 +35,7 @@ import java.util.concurrent.Future;
 
 import org.apache.sshd.common.PropertyResolver;
 import org.apache.sshd.common.PropertyResolverUtils;
-import org.apache.sshd.common.config.SshConfigFileReader;
+import org.apache.sshd.common.config.ConfigFileReaderSupport;
 import org.apache.sshd.common.io.BuiltinIoServiceFactoryFactories;
 import org.apache.sshd.common.io.IoServiceFactory;
 import org.apache.sshd.common.util.GenericUtils;
@@ -43,20 +43,21 @@ import org.apache.sshd.common.util.ValidateUtils;
 import org.apache.sshd.common.util.logging.AbstractLoggingBean;
 import org.apache.sshd.common.util.security.SecurityUtils;
 import org.apache.sshd.common.util.threads.ThreadUtils;
-import org.apache.sshd.server.Command;
-import org.apache.sshd.server.CommandFactory;
 import org.apache.sshd.server.Environment;
 import org.apache.sshd.server.ExitCallback;
 import org.apache.sshd.server.SessionAware;
 import org.apache.sshd.server.SshServer;
 import org.apache.sshd.server.auth.password.AcceptAllPasswordAuthenticator;
+import org.apache.sshd.server.command.Command;
+import org.apache.sshd.server.command.CommandFactory;
 import org.apache.sshd.server.forward.AcceptAllForwardingFilter;
 import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider;
 import org.apache.sshd.server.scp.ScpCommandFactory;
 import org.apache.sshd.server.session.ServerSession;
-import org.apache.sshd.server.shell.InteractiveProcessShellFactory;
+import org.apache.sshd.server.shell.ShellFactory;
 import org.apache.sshd.server.subsystem.sftp.SftpSubsystemFactory;
-import org.apache.sshd.util.test.Utils;
+import org.apache.sshd.util.test.CommonTestSupportUtils;
+import org.apache.sshd.util.test.CoreTestSupportUtils;
 
 /**
  * A basic implementation to allow remote mounting of the local file system via SFTP
@@ -232,6 +233,11 @@ public final class SshFsMounter extends SshServerCliSupport {
         }
 
         @Override
+        public String toString() {
+            return "mounter";
+        }
+
+        @Override
         public Command createCommand(String command) {
             return new MounterCommand(command);
         }
@@ -244,7 +250,7 @@ public final class SshFsMounter extends SshServerCliSupport {
     //////////////////////////////////////////////////////////////////////////
 
     public static void main(String[] args) throws Exception {
-        int port = SshConfigFileReader.DEFAULT_PORT;
+        int port = ConfigFileReaderSupport.DEFAULT_PORT;
         boolean error = false;
         Map<String, Object> options = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         int numArgs = GenericUtils.length(args);
@@ -278,6 +284,7 @@ public final class SshFsMounter extends SshServerCliSupport {
                     error = true;
                     break;
                 }
+
                 String opt = args[++i];
                 int idx = opt.indexOf('=');
                 if (idx <= 0) {
@@ -286,35 +293,37 @@ public final class SshFsMounter extends SshServerCliSupport {
                     break;
                 }
                 options.put(opt.substring(0, idx), opt.substring(idx + 1));
-            } else if (argName.startsWith("-")) {
-                System.err.println("illegal option: " + argName);
-                error = true;
-                break;
-            } else {
-                System.err.println("extra argument: " + argName);
-                error = true;
-                break;
             }
         }
+
+        SshServer sshd = error ? null : setupIoServiceFactory(
+            CoreTestSupportUtils.setupTestServer(SshFsMounter.class), options, System.out, System.err, args);
+        if (sshd == null) {
+            error = true;
+        }
+
         if (error) {
-            System.err.println("usage: sshfs [-p port] [-io mina|nio2] [-o option=value]");
+            System.err.println("usage: sshfs [-p port] [-io mina|nio2|netty] [-o option=value]");
             System.exit(-1);
         }
 
-        SshServer sshd = Utils.setupTestServer(SshFsMounter.class);
         Map<String, Object> props = sshd.getProperties();
         props.putAll(options);
         PropertyResolver resolver = PropertyResolverUtils.toPropertyResolver(options);
-        File targetFolder = Objects.requireNonNull(Utils.detectTargetFolder(MounterCommandFactory.class), "Failed to detect target folder");
+        File targetFolder = Objects.requireNonNull(CommonTestSupportUtils.detectTargetFolder(MounterCommandFactory.class), "Failed to detect target folder");
         if (SecurityUtils.isBouncyCastleRegistered()) {
             sshd.setKeyPairProvider(SecurityUtils.createGeneratorHostKeyProvider(new File(targetFolder, "key.pem").toPath()));
         } else {
-            sshd.setKeyPairProvider(new SimpleGeneratorHostKeyProvider(new File(targetFolder, "key.ser")));
+            sshd.setKeyPairProvider(new SimpleGeneratorHostKeyProvider(new File(targetFolder, "key.ser").toPath()));
         }
         // Should come AFTER key pair provider setup so auto-welcome can be generated if needed
         setupServerBanner(sshd, resolver);
 
-        sshd.setShellFactory(InteractiveProcessShellFactory.INSTANCE);
+        ShellFactory shellFactory = resolveShellFactory(System.err, resolver);
+        if (shellFactory != null) {
+            System.out.append("Using shell=").println(shellFactory.getClass().getName());
+            sshd.setShellFactory(shellFactory);
+        }
         sshd.setPasswordAuthenticator(AcceptAllPasswordAuthenticator.INSTANCE);
         sshd.setForwardingFilter(AcceptAllForwardingFilter.INSTANCE);
         sshd.setCommandFactory(new ScpCommandFactory.Builder().withDelegate(MounterCommandFactory.INSTANCE).build());
